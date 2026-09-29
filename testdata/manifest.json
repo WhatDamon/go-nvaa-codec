@@ -1,0 +1,209 @@
+{
+  "format": "NeoViolet ASCII-style Animation",
+  "alias": "NVAA",
+  "spec": "SPEC.md",
+  "container_version": 1,
+  "signature": "89 4e 56 41 41 0d 0a 1a 0a",
+  "extension": ".nvaa",
+  "mime": "application/vnd.neoviolet.nvaa",
+  "generated_by": "the NVAA reference implementation",
+  "generated_from": "the format's reference implementation (not this repository)",
+  "caveat": "Expected values come from the reference implementation, so they pin its behaviour rather than proving the spec. A mismatch means 'these two implementations differ -- read the cited SPEC section', not 'you are wrong'.",
+  "how_to_use": "accept: decode the .nvaa file and compare your result with the .expected.json. reject: decoding the animation MUST fail -- any error is fine, silently producing an animation is not. Note that the payload-defect vectors are only detectable once frames are parsed, so a metadata-only reader may not encounter them.",
+  "counts": {
+    "accept": 10,
+    "reject": 15
+  },
+  "vectors": [
+    {
+      "name": "minimal",
+      "kind": "accept",
+      "file": "vectors/minimal.nvaa",
+      "expected": "vectors/minimal.expected.json",
+      "intent": "Smallest valid container: 1x1 canvas, one frame, no index, no CRC (SPEC.md 4, 5, 8)."
+    },
+    {
+      "name": "body-span",
+      "kind": "accept",
+      "file": "vectors/body-span.nvaa",
+      "expected": "vectors/body-span.expected.json",
+      "intent": "One long same-style run in one row: the span body (SPEC.md 9.1) must be the smallest and is therefore used."
+    },
+    {
+      "name": "body-gap",
+      "kind": "accept",
+      "file": "vectors/body-gap.nvaa",
+      "expected": "vectors/body-gap.expected.json",
+      "intent": "Two far-apart cells: the position-delta body (SPEC.md 9.3) must win. This is the grammar that carries real video content."
+    },
+    {
+      "name": "body-list",
+      "kind": "accept",
+      "file": "vectors/body-list.nvaa",
+      "expected": "vectors/body-list.expected.json",
+      "intent": "A single cell: the cell-list body (SPEC.md 9.2) must win. Both grammar flags clear means cell-list, so a decoder cannot skip it."
+    },
+    {
+      "name": "keyframe-and-delta",
+      "kind": "accept",
+      "file": "vectors/keyframe-and-delta.nvaa",
+      "expected": "vectors/keyframe-and-delta.expected.json",
+      "intent": "A keyframe then a delta, with the camera moving and the viewport declared (SPEC.md 8.3, 8.5)."
+    },
+    {
+      "name": "deflate-index-crc",
+      "kind": "accept",
+      "file": "vectors/deflate-index-crc.nvaa",
+      "expected": "vectors/deflate-index-crc.expected.json",
+      "intent": "PAYLOAD_DEFLATED plus INDEX_BLOCK and CRC_BLOCK (SPEC.md 10, 11.1, 11.2). Payloads must be inflated before parsing; the index holds u32 absolute frame offsets; the CRC covers every byte before its marker."
+    },
+    {
+      "name": "empty-style-clears",
+      "kind": "accept",
+      "file": "vectors/empty-style-clears.nvaa",
+      "expected": "vectors/empty-style-clears.expected.json",
+      "intent": "A delta writes the empty style (style 0) over a painted cell. The expanded canvas must NOT contain that cell afterwards (SPEC.md 7, 13)."
+    },
+    {
+      "name": "wide-glyph",
+      "kind": "accept",
+      "file": "vectors/wide-glyph.nvaa",
+      "expected": "vectors/wide-glyph.expected.json",
+      "intent": "An East-Asian wide glyph occupies two columns and BOTH columns carry the same style (SPEC.md 7). A renderer emits the glyph once and skips the second column."
+    },
+    {
+      "name": "metadata-all-types",
+      "kind": "accept",
+      "file": "vectors/metadata-all-types.nvaa",
+      "expected": "vectors/metadata-all-types.expected.json",
+      "intent": "All six value types (SPEC.md 6.4): null, uint, int, bool, text, blob. Keys are stored in strict byte order regardless of insertion order."
+    },
+    {
+      "name": "no-camera-mode",
+      "kind": "accept",
+      "file": "vectors/no-camera-mode.nvaa",
+      "expected": "vectors/no-camera-mode.expected.json",
+      "intent": "HAS_CAMERA clear (SPEC.md 5.1): no frame carries a camera field and the viewport defaults to the canvas size."
+    },
+    {
+      "name": "reject-bad-signature",
+      "kind": "reject",
+      "file": "vectors/reject-bad-signature.nvaa",
+      "must": "reject",
+      "defect": "signature byte 0 changed from 0x89 to 0x00",
+      "intent": "The 9-byte signature is mandatory (SPEC.md 3.1)."
+    },
+    {
+      "name": "reject-bad-brand",
+      "kind": "reject",
+      "file": "vectors/reject-bad-brand.nvaa",
+      "must": "reject",
+      "defect": "brand byte 1 changed from 'V' to 'X'",
+      "intent": "The in-header brand must read NVAA (SPEC.md 3.2), so a payload extracted from a wrapper can still identify itself."
+    },
+    {
+      "name": "reject-unknown-version",
+      "kind": "reject",
+      "file": "vectors/reject-unknown-version.nvaa",
+      "must": "reject",
+      "defect": "version field set to 2",
+      "intent": "VERSION is a dispatch key, not a negotiation (SPEC.md 5)."
+    },
+    {
+      "name": "reject-reserved-header-flag",
+      "kind": "reject",
+      "file": "vectors/reject-reserved-header-flag.nvaa",
+      "must": "reject",
+      "defect": "reserved header flag bit 4 set",
+      "intent": "Reserved header flag bits MUST be 0 (SPEC.md 5.1): a decoder may not assume it understands a field it cannot see."
+    },
+    {
+      "name": "reject-reserved-frame-flag",
+      "kind": "reject",
+      "file": "vectors/reject-reserved-frame-flag.nvaa",
+      "must": "reject",
+      "defect": "reserved frame flag bit 7 set",
+      "intent": "Reserved frame flag bits MUST be 0 (SPEC.md 8.2)."
+    },
+    {
+      "name": "reject-both-body-flags",
+      "kind": "reject",
+      "file": "vectors/reject-both-body-flags.nvaa",
+      "must": "reject",
+      "defect": "frame flags set to 0x50 (keyframe|span|gap)",
+      "intent": "PAYLOAD_SPAN and PAYLOAD_GAP MUST NOT both be set (SPEC.md 8.2): the payload would be readable two ways."
+    },
+    {
+      "name": "reject-first-frame-not-keyframe",
+      "kind": "reject",
+      "file": "vectors/reject-first-frame-not-keyframe.nvaa",
+      "must": "reject",
+      "defect": "KEYFRAME cleared on frame 0",
+      "intent": "The first frame MUST be a keyframe (SPEC.md 8.5): a delta has no predecessor to apply against."
+    },
+    {
+      "name": "reject-truncated",
+      "kind": "reject",
+      "file": "vectors/reject-truncated.nvaa",
+      "must": "reject",
+      "defect": "file cut at the midpoint",
+      "intent": "A truncated stream MUST be rejected rather than half-decoded; STREAM_END (SPEC.md 11.3) exists so this is detectable."
+    },
+    {
+      "name": "reject-trailing-garbage",
+      "kind": "reject",
+      "file": "vectors/reject-trailing-garbage.nvaa",
+      "must": "reject",
+      "defect": "four bytes appended after the end of the stream",
+      "intent": "No bytes may follow the final block (SPEC.md 12): trailing data means a corrupt file or a mis-parse."
+    },
+    {
+      "name": "reject-duplicate-coordinate",
+      "kind": "reject",
+      "file": "vectors/reject-duplicate-coordinate.nvaa",
+      "must": "reject",
+      "defect": "the second payload entry given the same (x, y) as the first",
+      "intent": "A frame MUST NOT assign one coordinate twice (SPEC.md 9.4); otherwise the result depends on write order."
+    },
+    {
+      "name": "reject-style-out-of-range",
+      "kind": "reject",
+      "file": "vectors/reject-style-out-of-range.nvaa",
+      "must": "reject",
+      "defect": "the second payload entry given style_id == style_count",
+      "intent": "A style_id outside the style table MUST be rejected (SPEC.md 9.1)."
+    },
+    {
+      "name": "reject-crc-mismatch",
+      "kind": "reject",
+      "file": "vectors/reject-crc-mismatch.nvaa",
+      "must": "reject",
+      "defect": "one payload byte flipped; the CRC block at offset 78 untouched",
+      "intent": "CRC_BLOCK covers every byte before its marker (SPEC.md 11.2). Flipping a payload byte while leaving the CRC block intact must be caught."
+    },
+    {
+      "name": "reject-bad-index-offset",
+      "kind": "reject",
+      "file": "vectors/reject-bad-index-offset.nvaa",
+      "must": "reject",
+      "defect": "the first index entry incremented by one",
+      "intent": "INDEX_BLOCK entries must be the absolute offsets of the frame units (SPEC.md 11.1). A wrong offset destroys the only reason the index exists, which is seeking."
+    },
+    {
+      "name": "reject-unknown-metadata-type",
+      "kind": "reject",
+      "file": "vectors/reject-unknown-metadata-type.nvaa",
+      "must": "reject",
+      "defect": "one value_type byte set to 0x7F",
+      "intent": "Unknown metadata keys MUST be ignored, but an unknown value_type MUST be an error (SPEC.md 6.4): a decoder cannot safely skip a payload whose encoding it does not know."
+    },
+    {
+      "name": "reject-metadata-keys-unsorted",
+      "kind": "reject",
+      "file": "vectors/reject-metadata-keys-unsorted.nvaa",
+      "must": "reject",
+      "defect": "the two items swapped, so keys descend",
+      "intent": "Metadata keys MUST be unique and in strict byte order (SPEC.md 6.4), so that encoding is deterministic and two files can be diffed."
+    }
+  ]
+}

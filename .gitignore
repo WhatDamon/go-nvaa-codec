@@ -1,0 +1,11 @@
+# Binaries built from the examples
+/info
+/play
+/render
+/host
+
+# Test output
+*.test
+*.out
+
+.DS_Store

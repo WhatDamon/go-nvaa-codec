@@ -1,0 +1,132 @@
+{
+  "name": "minimal",
+  "intent": "Smallest valid container: 1x1 canvas, one frame, no index, no CRC (SPEC.md 4, 5, 8).",
+  "bytes": 79,
+  "container": {
+    "version": 1,
+    "flags": 1,
+    "canvas": {
+      "width": 1,
+      "height": 1
+    },
+    "fps": {
+      "num": 10,
+      "den": 1
+    },
+    "frame_ms": 100,
+    "counts": {
+      "palette": 4,
+      "glyphs": 7,
+      "styles": 2,
+      "frames": 1
+    },
+    "has_camera": true,
+    "has_index": false,
+    "has_crc": false,
+    "has_metadata": false
+  },
+  "palette": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      240,
+      240,
+      240
+    ],
+    [
+      255,
+      80,
+      80
+    ],
+    [
+      80,
+      220,
+      120
+    ]
+  ],
+  "glyphs": [
+    " ",
+    "#",
+    "*",
+    "o",
+    "|",
+    "-",
+    "\u65e5"
+  ],
+  "styles": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      1,
+      1,
+      0
+    ]
+  ],
+  "metadata": [],
+  "duration_ms": 100,
+  "frames": [
+    {
+      "index": 0,
+      "duration_ms": 100,
+      "keyframe": true,
+      "camera": [
+        0,
+        0
+      ],
+      "viewport": [
+        1,
+        1
+      ],
+      "payload_cells": [
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "canvas": [
+        [
+          0,
+          0,
+          1
+        ]
+      ]
+    }
+  ],
+  "resolve": [
+    {
+      "style_id": 0,
+      "glyph": " ",
+      "fg": [
+        0,
+        0,
+        0
+      ],
+      "bg": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "style_id": 1,
+      "glyph": "#",
+      "fg": [
+        240,
+        240,
+        240
+      ],
+      "bg": [
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}

@@ -1,0 +1,184 @@
+{
+  "name": "empty-style-clears",
+  "intent": "A delta writes the empty style (style 0) over a painted cell. The expanded canvas must NOT contain that cell afterwards (SPEC.md 7, 13).",
+  "bytes": 87,
+  "container": {
+    "version": 1,
+    "flags": 1,
+    "canvas": {
+      "width": 8,
+      "height": 1
+    },
+    "fps": {
+      "num": 10,
+      "den": 1
+    },
+    "frame_ms": 100,
+    "counts": {
+      "palette": 4,
+      "glyphs": 7,
+      "styles": 2,
+      "frames": 2
+    },
+    "has_camera": true,
+    "has_index": false,
+    "has_crc": false,
+    "has_metadata": false
+  },
+  "palette": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      240,
+      240,
+      240
+    ],
+    [
+      255,
+      80,
+      80
+    ],
+    [
+      80,
+      220,
+      120
+    ]
+  ],
+  "glyphs": [
+    " ",
+    "#",
+    "*",
+    "o",
+    "|",
+    "-",
+    "\u65e5"
+  ],
+  "styles": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      1,
+      1,
+      0
+    ]
+  ],
+  "metadata": [],
+  "duration_ms": 200,
+  "frames": [
+    {
+      "index": 0,
+      "duration_ms": 100,
+      "keyframe": true,
+      "camera": [
+        0,
+        0
+      ],
+      "viewport": [
+        8,
+        1
+      ],
+      "payload_cells": [
+        [
+          1,
+          0,
+          1
+        ],
+        [
+          2,
+          0,
+          1
+        ],
+        [
+          3,
+          0,
+          1
+        ]
+      ],
+      "canvas": [
+        [
+          1,
+          0,
+          1
+        ],
+        [
+          2,
+          0,
+          1
+        ],
+        [
+          3,
+          0,
+          1
+        ]
+      ]
+    },
+    {
+      "index": 1,
+      "duration_ms": 100,
+      "keyframe": false,
+      "camera": [
+        0,
+        0
+      ],
+      "viewport": [
+        8,
+        1
+      ],
+      "payload_cells": [
+        [
+          2,
+          0,
+          0
+        ]
+      ],
+      "canvas": [
+        [
+          1,
+          0,
+          1
+        ],
+        [
+          3,
+          0,
+          1
+        ]
+      ]
+    }
+  ],
+  "resolve": [
+    {
+      "style_id": 0,
+      "glyph": " ",
+      "fg": [
+        0,
+        0,
+        0
+      ],
+      "bg": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "style_id": 1,
+      "glyph": "#",
+      "fg": [
+        240,
+        240,
+        240
+      ],
+      "bg": [
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}

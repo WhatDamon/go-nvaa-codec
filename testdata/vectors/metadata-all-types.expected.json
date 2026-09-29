@@ -1,0 +1,163 @@
+{
+  "name": "metadata-all-types",
+  "intent": "All six value types (SPEC.md 6.4): null, uint, int, bool, text, blob. Keys are stored in strict byte order regardless of insertion order.",
+  "bytes": 171,
+  "container": {
+    "version": 1,
+    "flags": 9,
+    "canvas": {
+      "width": 8,
+      "height": 2
+    },
+    "fps": {
+      "num": 10,
+      "den": 1
+    },
+    "frame_ms": 100,
+    "counts": {
+      "palette": 4,
+      "glyphs": 7,
+      "styles": 2,
+      "frames": 1
+    },
+    "has_camera": true,
+    "has_index": false,
+    "has_crc": false,
+    "has_metadata": true
+  },
+  "palette": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      240,
+      240,
+      240
+    ],
+    [
+      255,
+      80,
+      80
+    ],
+    [
+      80,
+      220,
+      120
+    ]
+  ],
+  "glyphs": [
+    " ",
+    "#",
+    "*",
+    "o",
+    "|",
+    "-",
+    "\u65e5"
+  ],
+  "styles": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      1,
+      1,
+      0
+    ]
+  ],
+  "metadata": [
+    {
+      "key": "demo.blob",
+      "type": "blob",
+      "value": "0001feff"
+    },
+    {
+      "key": "demo.bool",
+      "type": "bool",
+      "value": true
+    },
+    {
+      "key": "demo.int",
+      "type": "int",
+      "value": -7
+    },
+    {
+      "key": "demo.null",
+      "type": "null",
+      "value": null
+    },
+    {
+      "key": "demo.text",
+      "type": "text",
+      "value": "wrapped \u65e5 text"
+    },
+    {
+      "key": "demo.uint",
+      "type": "uint",
+      "value": 300
+    }
+  ],
+  "duration_ms": 100,
+  "frames": [
+    {
+      "index": 0,
+      "duration_ms": 100,
+      "keyframe": true,
+      "camera": [
+        0,
+        0
+      ],
+      "viewport": [
+        8,
+        2
+      ],
+      "payload_cells": [
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "canvas": [
+        [
+          0,
+          0,
+          1
+        ]
+      ]
+    }
+  ],
+  "resolve": [
+    {
+      "style_id": 0,
+      "glyph": " ",
+      "fg": [
+        0,
+        0,
+        0
+      ],
+      "bg": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "style_id": 1,
+      "glyph": "#",
+      "fg": [
+        240,
+        240,
+        240
+      ],
+      "bg": [
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}
