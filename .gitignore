@@ -1,11 +1,24 @@
-# Binaries built from the examples
+# Binaries built from the examples (go build -o info ./example/info).
+# A Windows build appends .exe to these names; the rules below catch that.
 /info
 /play
 /render
 /host
 
-# Test output
+# Compiled output from linking, cgo or plugins.
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test output, coverage and profiles.
 *.test
 *.out
+*.prof
 
+# Editor and OS leftovers.
 .DS_Store
+._*
+Thumbs.db
+desktop.ini
+*~
