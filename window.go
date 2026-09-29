@@ -18,6 +18,14 @@ func ViewportWindow(a *Animation, f *Frame, columns, lines int) (x0, y0, width, 
 
 	x0 = clampInt(int(centreX)-width/2, 0, int(a.Width)-width)
 	y0 = clampInt(int(centreY)-height/2, 0, int(a.Height)-height)
+
+	// A viewport wider or taller than the canvas is not something a conformant
+	// encoder emits, but a decoder that passed it on would hand its callers a grid
+	// larger than the canvas -- and the canvas is the bound every allocation in a
+	// renderer is sized against. Cropping is the identity for a conformant file,
+	// where x0 is already clamped so that x0+width fits inside the canvas.
+	width = min(width, int(a.Width)-x0)
+	height = min(height, int(a.Height)-y0)
 	return x0, y0, width, height
 }
 

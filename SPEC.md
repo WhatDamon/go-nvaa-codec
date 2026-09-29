@@ -682,6 +682,8 @@ Not requirements, but the decisions this format was designed around.
 | `style_count` | **Must be a uvarint, not a uint8.** A real colour animation passes 255 `(glyph, fg, bg)` combinations easily |
 | `frame_count` | uvarint; a uint16 would only hold 1.8 hours at 10 fps |
 | Cell coordinates | uvarint, bounded by `canvas_width` and `canvas_height` |
+| Canvas area | uvarint allows more, but a decoder **SHOULD** bound it: two varints can name a grid that cannot be allocated. The reference implementation holds at 2^22 cells |
+| Counts against the file | Before allocating, a decoder **SHOULD** measure every count against the bytes remaining. A frame unit costs at least two bytes (flags and payload length); a style entry and a metadata item at least three. Without that check a few dozen header bytes name an allocation of any size |
 | Metadata items | No explicit limit; bounded by the block. A decoder **SHOULD** impose a sane ceiling against memory amplification |
 | Metadata key length | uvarint. Short dotted keys such as `epilepsy.verdict` are recommended |
 

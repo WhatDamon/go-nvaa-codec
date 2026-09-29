@@ -14,11 +14,36 @@ import (
 // Version is the container layout this package speaks.
 const Version uint16 = 1
 
-// maxInflated bounds a decompressed payload. A frame can name at most one cell
-// per canvas position, and a cell costs at most three varints of ten bytes, so
-// this is comfortably above any legitimate payload while keeping a hostile
-// compressed stream from expanding without limit.
+// maxInflated bounds a decompressed payload, and with it the memory a hostile
+// stream can ask for: zlib will turn a few kilobytes into gigabytes given the
+// chance. A frame can name at most one cell per canvas position, so the limit
+// derived from the canvas area is the meaningful one for real content; this
+// ceiling only starts to bind on a canvas larger than a terminal has ever been.
 const maxInflated = 64 << 20
+
+// maxCanvasCells bounds the grid a header may describe.
+//
+// A decoder holds one cell per position, so without a bound a few bytes of header
+// would name an allocation of any size: 1048576x1048576 is a terabyte of cells
+// described by two varints, and no terminal has ever been that large. The limit
+// is still generous -- 2^22 cells is a 2048x2048 grid, against 128x36 for the
+// largest animation this library has been pointed at.
+const maxCanvasCells = 1 << 22
+
+// maxTableHint caps the capacity pre-allocated for a table whose entry count came
+// from the stream.
+//
+// The count is ranged-checked against the bytes available before the table is
+// read, so this is not a correctness bound: it stops a truthful but enormous count
+// from reserving a slice far larger than the file that would have to justify it.
+// Anything past the hint is reached by append, so memory follows the entries that
+// are really present.
+const maxTableHint = 4096
+
+// tableHint suggests a capacity for such a table.
+func tableHint(count uint64) int {
+	return int(min(count, maxTableHint))
+}
 
 // Parse reads a container and validates everything except frame payloads:
 // signature, brand, version, flags, tables, metadata, the frame headers, the
@@ -80,8 +105,12 @@ func Parse(blob []byte) (*Animation, error) {
 	if width < 1 || height < 1 {
 		return nil, errAt(off, "canvas %dx%d must be at least 1x1", width, height)
 	}
-	if width > 1<<20 || height > 1<<20 {
-		return nil, errAt(off, "canvas %dx%d is implausibly large", width, height)
+	if width > maxCanvasCells || height > maxCanvasCells || width*height > maxCanvasCells {
+		// Three comparisons rather than one product: either dimension alone can be
+		// enormous, and the product of two of them would wrap.
+		return nil, errAt(off,
+			"canvas %dx%d is larger than the %d cells a decoder will hold",
+			width, height, maxCanvasCells)
 	}
 	a.Width, a.Height = uint32(width), uint32(height)
 
@@ -134,6 +163,15 @@ func Parse(blob []byte) (*Animation, error) {
 		if a.Metadata, off, err = parseMetadata(blob, off); err != nil {
 			return nil, err
 		}
+	}
+
+	// Every frame unit spends at least a flags byte and a payload length, so a
+	// count larger than half of what is left cannot be satisfied. Measuring the
+	// claim against the file first keeps a few header bytes from reserving
+	// bookkeeping for frames that were never written.
+	if remaining := len(blob) - off; frameCount > uint64(remaining)/2 {
+		return nil, errAt(off,
+			"frame count %d cannot fit in the remaining %d bytes", frameCount, remaining)
 	}
 
 	// Walk the frame headers. This locates every payload and picks up the
@@ -201,7 +239,7 @@ func parseGlyphs(b []byte, off int, count uint64) ([]string, int, error) {
 	if count > uint64(len(b)) {
 		return nil, off, errTruncated(off, "glyph table")
 	}
-	glyphs := make([]string, count)
+	glyphs := make([]string, 0, tableHint(count))
 	for i := range count {
 		n, next, err := readUvarint(b, off)
 		if err != nil {
@@ -218,7 +256,7 @@ func parseGlyphs(b []byte, off int, count uint64) ([]string, int, error) {
 		if !utf8.Valid(raw) {
 			return nil, off, errAt(off, "glyph %d is not valid UTF-8", i)
 		}
-		glyphs[i] = string(raw)
+		glyphs = append(glyphs, string(raw))
 	}
 	return glyphs, off, nil
 }
@@ -228,7 +266,7 @@ func parseStyles(b []byte, off int, count, glyphCount, paletteCount uint64) ([]S
 	if count > uint64(len(b)) {
 		return nil, off, errTruncated(off, "style table")
 	}
-	styles := make([]Style, count)
+	styles := make([]Style, 0, tableHint(count))
 	for i := range count {
 		g, next, err := readUvarint(b, off)
 		if err != nil {
@@ -252,7 +290,7 @@ func parseStyles(b []byte, off int, count, glyphCount, paletteCount uint64) ([]S
 		if bg >= paletteCount {
 			return nil, off, errAt(off, "style %d bg id %d out of range (%d)", i, bg, paletteCount)
 		}
-		styles[i] = Style{Glyph: uint32(g), FG: uint32(fg), BG: uint32(bg)}
+		styles = append(styles, Style{Glyph: uint32(g), FG: uint32(fg), BG: uint32(bg)})
 	}
 	return styles, off, nil
 }
@@ -273,8 +311,8 @@ func parseMetadata(b []byte, off int) (Metadata, int, error) {
 	}
 
 	md := Metadata{
-		keys: make([]string, 0, count),
-		vals: make([]MetaValue, 0, count),
+		keys: make([]string, 0, tableHint(count)),
+		vals: make([]MetaValue, 0, tableHint(count)),
 	}
 
 	for i := range count {
@@ -396,7 +434,7 @@ func parseMetaValue(b []byte, off int, valueType uint8) (MetaValue, int, error) 
 // accumulating the camera. Returning the offset past the last frame lets the
 // trailer blocks be found without a second pass.
 func parseFrames(b []byte, off int, a *Animation, count int) ([]frameInfo, int, error) {
-	frames := make([]frameInfo, 0, count)
+	frames := make([]frameInfo, 0, tableHint(uint64(count)))
 
 	cameraX, cameraY := int64(0), int64(0)
 	viewportW, viewportH := a.Width, a.Height
@@ -596,7 +634,7 @@ func (a *Animation) frameAt(i int) (*Frame, error) {
 
 	payload := info.payload
 	if info.flags&frameDeflated != 0 {
-		if payload, err = inflate(payload, a.Width*a.Height); err != nil {
+		if payload, err = inflate(payload, a.area()); err != nil {
 			return nil, err
 		}
 	}
@@ -774,22 +812,25 @@ func (a *Animation) FrameAtTime(ms uint64) int {
 	return min(max(after-1, 0), n-1)
 }
 
+// area is the canvas cell count, in 64 bits so that a large grid cannot wrap.
+func (a *Animation) area() uint64 { return uint64(a.Width) * uint64(a.Height) }
+
 // inflate decompresses a per-frame zlib stream, bounded by maxInflated.
-func inflate(data []byte, area uint32) ([]byte, error) {
+func inflate(data []byte, area uint64) ([]byte, error) {
 	zr, err := zlib.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, errFormat("payload is not a valid zlib stream: %v", err)
 	}
 	defer func() { _ = zr.Close() }()
 
-	// A payload can name at most one cell per canvas position at three varints
-	// each, so this is far above anything legitimate.
-	limit := int64(area)*40 + 4096
+	// At most one cell per canvas position, and a cell costs a handful of bytes
+	// even with its varints padded to full length, so 40 per cell is generous.
+	limit := area*40 + 4096
 	if limit > maxInflated {
 		limit = maxInflated
 	}
 
-	out, err := io.ReadAll(io.LimitReader(zr, limit))
+	out, err := io.ReadAll(io.LimitReader(zr, int64(limit)))
 	if err != nil {
 		return nil, errFormat("inflating payload: %v", err)
 	}

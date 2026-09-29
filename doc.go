@@ -22,7 +22,7 @@
 // Canvas folds a frame into the picture, which is how a player keeps one canvas
 // in memory instead of every frame:
 //
-//	canvas := nvaa.NewCanvas(anim)
+//	canvas := nvaa.NewCanvas(anim.Width, anim.Height)
 //	for frame, err := range anim.Frames() {
 //		if err != nil {
 //			return err

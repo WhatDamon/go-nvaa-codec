@@ -86,6 +86,10 @@ type Canvas struct {
 }
 
 // NewCanvas allocates an empty canvas.
+//
+// The dimensions of a parsed file are already bounded, so the usual call is safe
+// by construction. A caller assembling a canvas by hand owns the same bound: the
+// allocation is one uint32 per cell, and nothing here checks it.
 func NewCanvas(w, h uint32) *Canvas {
 	return &Canvas{W: w, H: h, cell: make([]uint32, uint64(w)*uint64(h))}
 }
