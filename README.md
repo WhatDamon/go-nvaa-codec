@@ -5,7 +5,8 @@ terminal animations in which every cell carries a glyph and its own 24-bit
 foreground and background colour.
 
 The decoder is complete and checks itself against the conformance suite in
-[`testdata/`](testdata). The format is described in [`SPEC.md`](SPEC.md).
+[`testdata/`](testdata). The format is described in [`SPEC.md`](SPEC.md); version 1 of it is
+final, so the decoder will keep reading files written today.
 
 ```console
 $ go get github.com/WhatDamon/go-nvaa-codec

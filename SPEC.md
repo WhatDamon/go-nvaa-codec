@@ -8,10 +8,24 @@ Identity: `NVAA` · Extension: `.nvaa` · MIME: `application/vnd.neoviolet.nvaa`
 
 ## 0. Status
 
-Draft. Nothing depends on this format yet, so there is **no backwards
-compatibility obligation** and the specification may be revised in a breaking
-way at any time. The `version` field exists for self-identification and for a
-parser to check what it is reading; it is not a compatibility promise.
+**Version 1 is final.** What is frozen is the byte layout and the decoding
+semantics (§3–§11): a file written today must still be readable later.
+
+- A **reader MUST** keep accepting every version 1 file. New meaning may only
+  land where an older reader is allowed to ignore it — today that means metadata
+  keys (§6.4: unknown keys MUST be ignored).
+- A **writer MUST NOT** change what an existing field means. New meaning needs
+  either a new `version` value or one of the reserved flag bits, and the latter
+  makes a reader that knows only this document *reject* the file (reserved bits
+  MUST be zero) rather than misread it.
+
+The `version` field is therefore a compatibility promise and not merely a
+label: it names this document. The checkable form of that promise is the vectors
+in §17.
+
+Everything non-normative may still improve — encoder guidance (§13), wording,
+examples — as long as it does not change how any existing file is read. The
+extension points in §14 are **not** part of version 1.
 
 Keywords in this document: **MUST** / **MUST NOT**, **SHOULD** / **SHOULD NOT**,
 **MAY**.
