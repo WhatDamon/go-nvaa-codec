@@ -23,7 +23,7 @@ import (
 	"github.com/WhatDamon/go-nvaa-codec/player"
 )
 
-const usage = `play FILE.nvaa [options]
+const usage = `nvaa-play FILE.nvaa [options]
 
 Play the animation in the terminal.
 
@@ -50,13 +50,13 @@ keys:
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "play: "+err.Error())
+		fmt.Fprintln(os.Stderr, "nvaa-play: "+err.Error())
 		os.Exit(1)
 	}
 }
 
 func run(args []string) error {
-	flags := flag.NewFlagSet("play", flag.ContinueOnError)
+	flags := flag.NewFlagSet("nvaa-play", flag.ContinueOnError)
 	columns := flags.Int("w", 80, "grid width")
 	lines := flags.Int("h", 24, "grid height")
 	showStats := flags.Bool("stats", false, "show a live meter")

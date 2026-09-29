@@ -21,7 +21,7 @@ import (
 	"github.com/WhatDamon/go-nvaa-codec/photosensitivity"
 )
 
-const usage = `pse FILE.nvaa [options]
+const usage = `nvaa-pse FILE.nvaa [options]
 
 Analyse an animation against the WCAG flash thresholds, and report the result
 beside the photosensitivity record the file carries about itself.
@@ -37,13 +37,13 @@ options:
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, "pse: "+err.Error())
+		fmt.Fprintln(os.Stderr, "nvaa-pse: "+err.Error())
 		os.Exit(1)
 	}
 }
 
 func run(args []string, out io.Writer) error {
-	flags := flag.NewFlagSet("pse", flag.ContinueOnError)
+	flags := flag.NewFlagSet("nvaa-pse", flag.ContinueOnError)
 	viewport := flags.String("viewport", "", "analysis window, WxH")
 	areaThreshold := flags.Float64("area-threshold", photosensitivity.DefaultAreaThreshold,
 		"flashing area fraction that counts")

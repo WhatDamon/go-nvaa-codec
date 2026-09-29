@@ -18,7 +18,7 @@ import (
 	"github.com/WhatDamon/go-nvaa-codec/internal/cli"
 )
 
-const usage = `info FILE.nvaa
+const usage = `nvaa-info FILE.nvaa
 
 Print the container header, the palette, glyph and style tables, the frame
 counts, the payload grammars in use, and every metadata item.
@@ -26,13 +26,13 @@ counts, the payload grammars in use, and every metadata item.
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "info: "+err.Error())
+		fmt.Fprintln(os.Stderr, "nvaa-info: "+err.Error())
 		os.Exit(1)
 	}
 }
 
 func run(args []string) error {
-	flags := flag.NewFlagSet("info", flag.ContinueOnError)
+	flags := flag.NewFlagSet("nvaa-info", flag.ContinueOnError)
 
 	rest, operand, err := cli.SplitOperand(args, nil)
 	if err != nil {

@@ -81,26 +81,29 @@ delta — the same idea as a global motion vector. An optional metadata block si
 ## The examples
 
 ```console
-$ go build -o info   ./example/info
-$ go build -o play   ./example/play
-$ go build -o render ./example/render
-$ go build -o pse    ./example/pse
-$ go build -o host   ./example/host
+$ go build -o nvaa-info   ./example/info
+$ go build -o nvaa-play   ./example/play
+$ go build -o nvaa-render ./example/render
+$ go build -o nvaa-pse    ./example/pse
+$ go build -o nvaa-host   ./example/host
 
-$ ./info   testdata/demo.nvaa
-$ ./play   testdata/demo.nvaa
-$ ./play   testdata/demo.nvaa --seek 0:00.5 --stats
-$ ./render testdata/demo.nvaa -w 80 -h 24 --digest
-$ ./pse    testdata/strobe.nvaa
-$ ./host   testdata/demo.nvaa
+$ ./nvaa-info   testdata/demo.nvaa
+$ ./nvaa-play   testdata/demo.nvaa
+$ ./nvaa-play   testdata/demo.nvaa --seek 0:00.5 --stats
+$ ./nvaa-render testdata/demo.nvaa -w 80 -h 24 --digest
+$ ./nvaa-pse    testdata/strobe.nvaa
+$ ./nvaa-host   testdata/demo.nvaa
 ```
 
-`info` prints what a file says about itself without decoding any frame. `play`
-plays it in the terminal. `render` writes frames with no terminal attached —
-plain glyph rows, base64 repaints, or a per-frame digest — which is what makes it
-scriptable and comparable between implementations. `pse` analyses the flashing and
-sets it beside what the file claims. `host` embeds the player in an application of
-its own, as one pane among several.
+`nvaa-info` prints what a file says about itself without decoding any frame.
+`nvaa-play` plays it in the terminal. `nvaa-render` writes frames with no terminal
+attached — plain glyph rows, base64 repaints, or a per-frame digest — which is what
+makes it scriptable and comparable between implementations. `nvaa-pse` analyses the
+flashing and sets it beside what the file claims. `nvaa-host` embeds the player in
+an application of its own, as one pane among several.
+
+Every binary is named `nvaa-<what it does>`, since a rule that ignores a file by
+name would also swallow a directory of that name — and `render` is a package.
 
 Player keys: `space` pause · `n` / `p` step · `[` / `]` jump keyframe ·
 `←` / `→` five seconds · `↓` / `↑` a minute · `home` / `end` the ends ·
@@ -179,10 +182,10 @@ with, and a pass is a statement about that analysis rather than a certification.
 For broadcast, distribution, or any safety-critical use, run a certified analyser.
 
 ```console
-$ go build -o pse ./example/pse
-$ ./pse testdata/demo.nvaa
-$ ./pse testdata/strobe.nvaa
-$ ./pse testdata/demo.nvaa --viewport 20x8
+$ go build -o nvaa-pse ./example/pse
+$ ./nvaa-pse testdata/demo.nvaa
+$ ./nvaa-pse testdata/strobe.nvaa
+$ ./nvaa-pse testdata/demo.nvaa --viewport 20x8
 ```
 
 `pse` prints the analysis, then what the file says about itself, then whether the

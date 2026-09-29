@@ -36,10 +36,10 @@ import (
 )
 
 const (
-	usage = `host - an example application that embeds the NVAA player
+	usage = `nvaa-host - an example application that embeds the NVAA player
 
 usage:
-  host [-w N] [-h N] FILE.nvaa
+  nvaa-host [-w N] [-h N] FILE.nvaa
 
 keys:
   tab           show or hide the file's details
@@ -68,13 +68,13 @@ var (
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "host: "+err.Error())
+		fmt.Fprintln(os.Stderr, "nvaa-host: "+err.Error())
 		os.Exit(1)
 	}
 }
 
 func run() error {
-	flags := flag.NewFlagSet("host", flag.ContinueOnError)
+	flags := flag.NewFlagSet("nvaa-host", flag.ContinueOnError)
 	columns := flags.Int("w", 100, "terminal width")
 	lines := flags.Int("h", 30, "terminal height")
 	flags.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -83,7 +83,7 @@ func run() error {
 		return err
 	}
 	if flags.NArg() != 1 {
-		return errors.New("usage: host [-w N] [-h N] FILE.nvaa")
+		return errors.New("usage: nvaa-host [-w N] [-h N] FILE.nvaa")
 	}
 
 	anim, err := nvaa.ReadFile(flags.Arg(0))

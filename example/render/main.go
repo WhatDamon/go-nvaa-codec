@@ -20,7 +20,7 @@ import (
 	"github.com/WhatDamon/go-nvaa-codec/render"
 )
 
-const usage = `render FILE.nvaa [options]
+const usage = `nvaa-render FILE.nvaa [options]
 
 Write frames with no terminal, for scripts and comparison.
 
@@ -35,13 +35,13 @@ options:
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "render: "+err.Error())
+		fmt.Fprintln(os.Stderr, "nvaa-render: "+err.Error())
 		os.Exit(1)
 	}
 }
 
 func run(args []string) error {
-	flags := flag.NewFlagSet("render", flag.ContinueOnError)
+	flags := flag.NewFlagSet("nvaa-render", flag.ContinueOnError)
 	columns := flags.Int("w", 80, "grid width")
 	lines := flags.Int("h", 24, "grid height")
 	from := flags.Int("from", 0, "first frame")

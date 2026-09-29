@@ -1,9 +1,12 @@
-# Binaries built from the examples (go build -o info ./example/info).
+# Binaries built from the examples, one per program (go build -o nvaa-info
+# ./example/info). They all carry an nvaa- prefix: a rule that ignores a file by
+# name ignores a directory of that name too, and render is a package here.
 # A Windows build appends .exe to these names; the rules below catch that.
-/info
-/play
-/render
-/host
+/nvaa-info
+/nvaa-play
+/nvaa-render
+/nvaa-pse
+/nvaa-host
 
 # Compiled output from linking, cgo or plugins.
 *.exe
