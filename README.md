@@ -18,8 +18,9 @@ $ go get github.com/WhatDamon/go-nvaa-codec
 | --- | --- |
 | [`nvaa`](.) | The decoder: container, tables, metadata, and the three payload grammars. **No dependencies outside the standard library** |
 | [`render`](render) | A decoded frame as a grid of glyphs and colours, and a grid as terminal output |
+| [`photosensitivity`](photosensitivity) | Flash analysis against the WCAG thresholds, and a reader for what a file claims about itself |
 | [`player`](player) | A Bubble Tea component that plays an animation inside a box, plus the stand-alone program wrapper |
-| [`example/`](example) | Four runnable programs |
+| [`example/`](example) | Five runnable programs |
 | `internal/` | Shared helpers, not importable |
 
 `render` knows nothing about terminals beyond the escape sequences it writes, and
@@ -83,20 +84,23 @@ delta — the same idea as a global motion vector. An optional metadata block si
 $ go build -o info   ./example/info
 $ go build -o play   ./example/play
 $ go build -o render ./example/render
+$ go build -o pse    ./example/pse
 $ go build -o host   ./example/host
 
 $ ./info   testdata/demo.nvaa
 $ ./play   testdata/demo.nvaa
 $ ./play   testdata/demo.nvaa --seek 0:00.5 --stats
 $ ./render testdata/demo.nvaa -w 80 -h 24 --digest
+$ ./pse    testdata/strobe.nvaa
 $ ./host   testdata/demo.nvaa
 ```
 
 `info` prints what a file says about itself without decoding any frame. `play`
 plays it in the terminal. `render` writes frames with no terminal attached —
 plain glyph rows, base64 repaints, or a per-frame digest — which is what makes it
-scriptable and comparable between implementations. `host` embeds the player in an
-application of its own, as one pane among several.
+scriptable and comparable between implementations. `pse` analyses the flashing and
+sets it beside what the file claims. `host` embeds the player in an application of
+its own, as one pane among several.
 
 Player keys: `space` pause · `n` / `p` step · `[` / `]` jump keyframe ·
 `←` / `→` five seconds · `↓` / `↑` a minute · `home` / `end` the ends ·
@@ -151,6 +155,44 @@ own, a frame may repaint part of the former. The cure is in the host — give ev
 panel a background of its own, as `example/host` does — and the reason is
 worth knowing before designing the layout.
 
+## Photosensitivity
+
+`photosensitivity` answers two different questions about flashing, and keeps the
+answers apart.
+
+**What does the file claim?** `Declared` reads the record a producer may have left
+behind: a verdict, the counts behind it, and the method that produced it. A file
+with no record, or with one in a shape nothing can be concluded from, reads as
+`VerdictUnknown` — never as a pass, because "nobody checked" and "checked and found
+fine" are different claims.
+
+**What do the frames do?** `Analyze` runs the WCAG thresholds over the animation
+itself. It blends each style's foreground and background into one cell colour,
+compares consecutive frames through the same viewport arithmetic the renderer uses,
+and counts flashes as opposing pairs: a 10 fps strobe is five flashes a second,
+not ten.
+
+The result is an approximation and says so. A glyph grid is not a pixel grid, the
+analysis window stands in for a ten degree visual field, and the viewing distance
+is not knowable from a file — so an assessment records the thresholds it was made
+with, and a pass is a statement about that analysis rather than a certification.
+For broadcast, distribution, or any safety-critical use, run a certified analyser.
+
+```console
+$ go build -o pse ./example/pse
+$ ./pse testdata/demo.nvaa
+$ ./pse testdata/strobe.nvaa
+$ ./pse testdata/demo.nvaa --viewport 20x8
+```
+
+`pse` prints the analysis, then what the file says about itself, then whether the
+two agree. `testdata/strobe.nvaa` is the interesting one: twelve frames at 10 fps
+that flash five times a second, carrying the failing record its own analysis
+produced, so a reader has a claim to check rather than one to trust.
+
+The player reads the same record before it starts, and gates playback on it. What
+it must not do — and does not — is treat a missing record as permission.
+
 ## Verification
 
 ```console
@@ -160,7 +202,9 @@ $ go test ./...
 The suite covers the container and payload grammars against the conformance
 vectors, the four codes of the cell model (wide glyph pairs, empty-style clearing,
 the last-column rule, canonical order), the time index used for seeking, the
-renderer's viewport arithmetic, and the player as an embedded component.
+renderer's viewport arithmetic, the analyser against the numbers the reference
+implementation reports for the same frames, and the player as an embedded
+component.
 
 The expected values in `testdata/` were produced by a reference implementation, so
 they pin its behaviour: a disagreement means two implementations differ, not that
@@ -168,8 +212,8 @@ either is wrong. Section 17 of the specification says this in full.
 
 ## Requirements
 
-Go 1.26 or newer. The decoder itself needs nothing but the standard library;
-`render` additionally uses `golang.org/x/text` for East Asian widths, and
+Go 1.26 or newer. The decoder and the analyser need nothing but the standard
+library; `render` additionally uses `golang.org/x/text` for East Asian widths, and
 `player` uses Bubble Tea v2.
 
 ## Licence

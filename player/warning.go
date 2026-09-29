@@ -5,73 +5,27 @@ import (
 	"strings"
 
 	"github.com/WhatDamon/go-nvaa-codec"
-)
-
-// Photosensitivity metadata keys, as a producer declares them. A consumer that
-// finds none treats the animation as unassessed, never as safe.
-const (
-	keyPSEAssessed    = "epilepsy.assessed"
-	keyPSEVerdict     = "epilepsy.verdict"
-	keyPSEMethod      = "epilepsy.method"
-	keyPSEStandard    = "epilepsy.standard"
-	keyPSEGeneral     = "epilepsy.general_flashes_per_second"
-	keyPSERed         = "epilepsy.red_flashes_per_second"
-	keyPSEArea        = "epilepsy.max_flash_area_permille"
-	keyContentWarning = "content.warning"
+	"github.com/WhatDamon/go-nvaa-codec/photosensitivity"
 )
 
 // Verdict is the three-state reading of a file's own safety declaration.
-type Verdict int
+//
+// It is the analyser's type rather than a copy of it, so that what a file claims
+// and what an analysis of the same file concludes are the same three values and
+// can be compared directly. The rule for reading a claim lives there too.
+type Verdict = photosensitivity.Verdict
 
 const (
 	// VerdictUnknown means the file does not say, or says it without an
 	// assessment behind it. It is never a statement that the content is safe.
-	VerdictUnknown Verdict = iota
+	VerdictUnknown = photosensitivity.VerdictUnknown
 
 	// VerdictPass means the producer assessed the content and it passed.
-	VerdictPass
+	VerdictPass = photosensitivity.VerdictPass
 
 	// VerdictFail means the producer assessed the content and it failed.
-	VerdictFail
+	VerdictFail = photosensitivity.VerdictFail
 )
-
-// String renders a verdict for display.
-func (v Verdict) String() string {
-	switch v {
-	case VerdictPass:
-		return "pass"
-	case VerdictFail:
-		return "fail"
-	}
-	return "unknown"
-}
-
-// ReadVerdict interprets the photosensitivity metadata.
-//
-// The asymmetry is the whole point: a missing, mistyped, or absent field yields
-// unknown rather than pass, because "nobody checked" and "checked and found
-// fine" are different claims. A string "true" for epilepsy.assessed is not an
-// assessment, and treating it as one would let a malformed file silence a
-// warning that a well-formed one would raise.
-func ReadVerdict(md nvaa.Metadata) Verdict {
-	assessed, ok := md.Lookup(keyPSEAssessed)
-	if !ok || assessed.Type != nvaa.MetaBool || !assessed.Bool {
-		return VerdictUnknown
-	}
-
-	verdict, ok := md.Lookup(keyPSEVerdict)
-	if !ok || verdict.Type != nvaa.MetaText {
-		return VerdictUnknown
-	}
-
-	switch verdict.Text {
-	case "pass":
-		return VerdictPass
-	case "fail":
-		return VerdictFail
-	}
-	return VerdictUnknown
-}
 
 // Warning is the advisory a file carries about its own photosensitivity risk.
 type Warning struct {
@@ -86,38 +40,22 @@ type Warning struct {
 }
 
 // WarningFrom extracts the advisory from an animation's metadata.
+//
+// This is what the file claims, taken at its word. To find out whether the claim
+// holds, analyse the same animation with the photosensitivity package and compare
+// its verdict with this one.
 func WarningFrom(anim *nvaa.Animation) Warning {
-	md := anim.Metadata
-
-	w := Warning{
-		Verdict:  ReadVerdict(md),
-		Method:   textOf(md, keyPSEMethod),
-		Standard: textOf(md, keyPSEStandard),
-		Message:  textOf(md, keyContentWarning),
-		General:  uintOf(md, keyPSEGeneral),
-		Red:      uintOf(md, keyPSERed),
+	declared := photosensitivity.Declared(anim.Metadata)
+	return Warning{
+		Verdict:  declared.Verdict,
+		Message:  declared.Warning,
+		Method:   declared.Method,
+		Standard: declared.Standard,
+		General:  declared.General,
+		Red:      declared.Red,
+		Area:     declared.Area,
+		HasArea:  declared.HasArea,
 	}
-
-	if area, ok := md.Lookup(keyPSEArea); ok && area.Type == nvaa.MetaUint {
-		w.Area, w.HasArea = area.Uint, true
-	}
-	return w
-}
-
-// textOf reads a text field, ignoring one stored under the wrong type.
-func textOf(md nvaa.Metadata, key string) string {
-	if v, ok := md.Lookup(key); ok && v.Type == nvaa.MetaText {
-		return v.Text
-	}
-	return ""
-}
-
-// uintOf reads an unsigned field, ignoring one stored under the wrong type.
-func uintOf(md nvaa.Metadata, key string) uint64 {
-	if v, ok := md.Lookup(key); ok && v.Type == nvaa.MetaUint {
-		return v.Uint
-	}
-	return 0
 }
 
 // Box renders the advisory as a bordered block for the terminal.
