@@ -12,6 +12,7 @@
 package render
 
 import (
+	"crypto/sha256"
 	"strconv"
 	"strings"
 
@@ -59,6 +60,29 @@ func (g *Grid) Row(vy int) []Cell {
 		return nil
 	}
 	return g.Cells[vy*g.Width : (vy+1)*g.Width]
+}
+
+func (g *Grid) Digest() [sha256.Size]byte {
+	hasher := sha256.New()
+
+	for vy := range g.Height {
+		for vx := range g.Width {
+			cell := g.At(vx, vy)
+			if cell.Continuation {
+				continue
+			}
+			hasher.Write([]byte(cell.Glyph))
+			hasher.Write([]byte{0})
+			hasher.Write([]byte{
+				cell.FG.R, cell.FG.G, cell.FG.B,
+				cell.BG.R, cell.BG.G, cell.BG.B,
+			})
+		}
+	}
+
+	var out [sha256.Size]byte
+	copy(out[:], hasher.Sum(nil))
+	return out
 }
 
 // Composer folds frames into a canvas and resolves visible windows.

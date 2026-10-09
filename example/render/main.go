@@ -7,7 +7,6 @@
 package main
 
 import (
-	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"flag"
@@ -17,7 +16,6 @@ import (
 	nvaa "github.com/WhatDamon/go-nvaa-codec"
 	"github.com/WhatDamon/go-nvaa-codec/internal/cli"
 	"github.com/WhatDamon/go-nvaa-codec/player"
-	"github.com/WhatDamon/go-nvaa-codec/render"
 )
 
 const usage = `nvaa-render FILE.nvaa [options]
@@ -91,7 +89,7 @@ func run(args []string) error {
 			fmt.Fprintln(out, base64.StdEncoding.EncodeToString([]byte(grid.FullRepaint())))
 		case *digest:
 			fmt.Fprintf(out, "%d %d %d %d %d %x\n",
-				timeline.Index(), grid.X0, grid.Y0, grid.Width, grid.Height, gridDigest(grid))
+				timeline.Index(), grid.X0, grid.Y0, grid.Width, grid.Height, grid.Digest())
 		default:
 			fmt.Fprintf(out, "# frame %d  (%d,%d) %dx%d\n",
 				timeline.Index(), grid.X0, grid.Y0, grid.Width, grid.Height)
@@ -109,33 +107,4 @@ func run(args []string) error {
 			return nil
 		}
 	}
-}
-
-// gridDigest hashes what a frame puts on screen.
-//
-// It covers resolved glyphs and colours rather than style ids, so two
-// implementations agree when they display the same thing even if their style
-// tables are ordered differently. Continuation columns are skipped because the
-// wide glyph that owns them already contributes.
-func gridDigest(grid *render.Grid) [sha256.Size]byte {
-	hasher := sha256.New()
-
-	for vy := range grid.Height {
-		for vx := range grid.Width {
-			cell := grid.At(vx, vy)
-			if cell.Continuation {
-				continue
-			}
-			hasher.Write([]byte(cell.Glyph))
-			hasher.Write([]byte{0})
-			hasher.Write([]byte{
-				cell.FG.R, cell.FG.G, cell.FG.B,
-				cell.BG.R, cell.BG.G, cell.BG.B,
-			})
-		}
-	}
-
-	var out [sha256.Size]byte
-	copy(out[:], hasher.Sum(nil))
-	return out
 }
