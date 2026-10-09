@@ -8,6 +8,7 @@ import (
 	"iter"
 	"os"
 	"sort"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -180,6 +181,7 @@ func Parse(blob []byte) (*Animation, error) {
 		return nil, err
 	}
 	a.buildTimeIndex()
+	a.buildKeyframes()
 
 	if a.HasIndex {
 		if off, err = parseIndex(blob, off, a); err != nil {
@@ -619,31 +621,62 @@ func (a *Animation) Frames() iter.Seq2[*Frame, error] {
 func (a *Animation) FrameAt(i int) (*Frame, error) { return a.frameAt(i) }
 
 // frameAt inflates and decodes the payload of one frame.
+//
+// The cells belong to the caller: this is the entry point for a frame that is
+// going to be kept. FrameApplier is the one for frames that are not.
 func (a *Animation) frameAt(i int) (*Frame, error) {
-	if i < 0 || i >= len(a.frames) {
-		return nil, errFormat("frame index %d out of range (%d)", i, len(a.frames))
-	}
-	info := a.frames[i]
-
-	kind, err := bodyKindFromFlags(info.flags)
-	if err != nil {
-		// Parse already screened the frame flags, so reaching this means the
-		// record came from somewhere other than Parse.
-		return nil, errFormat("%v", err)
-	}
-
-	payload := info.payload
-	if info.flags&frameDeflated != 0 {
-		if payload, err = inflate(payload, a.area()); err != nil {
-			return nil, err
-		}
-	}
-
-	cells, err := decodePayload(payload, kind, a.Width, a.Height, uint32(len(a.Styles)))
+	info, kind, err := a.frameInfoAt(i)
 	if err != nil {
 		return nil, err
 	}
 
+	cells, err := a.decodeCells(info, kind, nil)
+	if err != nil {
+		return nil, err
+	}
+	return frameOf(i, info, cells), nil
+}
+
+// frameInfoAt is the bounds check and the grammar lookup every decode needs.
+func (a *Animation) frameInfoAt(i int) (frameInfo, bodyKind, error) {
+	if i < 0 || i >= len(a.frames) {
+		return frameInfo{}, 0, errFormat("frame index %d out of range (%d)", i, len(a.frames))
+	}
+
+	info := a.frames[i]
+	kind, err := bodyKindFromFlags(info.flags)
+	if err != nil {
+		// Parse already screened the frame flags, so reaching this means the
+		// record came from somewhere other than Parse.
+		return frameInfo{}, 0, errFormat("%v", err)
+	}
+	return info, kind, nil
+}
+
+// decodeCells inflates one frame's payload and decodes its cells.
+//
+// dst, when it has capacity, is written into rather than replaced. A rewind
+// decodes every frame between a keyframe and its target and reads only the last
+// of them, so a cell slice per frame is a cell slice per rewind's worth of
+// garbage -- and for a keyframe that paints the whole canvas, the largest
+// allocation on the playback path.
+func (a *Animation) decodeCells(info frameInfo, kind bodyKind, dst []Cell) ([]Cell, error) {
+	payload := info.payload
+	if info.flags&frameDeflated != 0 {
+		scratch := acquireInflateScratch()
+		defer releaseInflateScratch(scratch)
+
+		var err error
+		if payload, err = inflateInto(scratch, payload, a.area()); err != nil {
+			return dst, err
+		}
+	}
+
+	return decodePayloadInto(dst, payload, kind, a.Width, a.Height, uint32(len(a.Styles)))
+}
+
+// frameOf projects a decoded payload into the frame a caller sees.
+func frameOf(i int, info frameInfo, cells []Cell) *Frame {
 	return &Frame{
 		Index:      i,
 		Flags:      info.flags,
@@ -654,7 +687,58 @@ func (a *Animation) frameAt(i int) (*Frame, error) {
 		ViewportW:  info.viewportW,
 		ViewportH:  info.viewportH,
 		Payload:    cells,
-	}, nil
+	}
+}
+
+// FrameApplier folds frames into a canvas, keeping the buffers one frame needs
+// for the next.
+//
+// It exists for the frames a player decodes without ever looking at them: a
+// rewind replays every frame from a keyframe to the frame asked for, and only
+// that last one is ever read. FrameAt answers with a frame the caller may keep,
+// so it must allocate; this answers with a frame whose cells are a buffer it
+// reuses, which is the difference between a cell slice per frame and a cell
+// slice per rewind.
+//
+// A FrameApplier is not safe for concurrent use. One per timeline is right.
+type FrameApplier struct {
+	cells []Cell
+}
+
+// NewFrameApplier prepares an applier, which allocates no buffer until it
+// decodes something.
+func NewFrameApplier() *FrameApplier { return &FrameApplier{} }
+
+// Apply decodes frame i and folds it into c, returning the frame it folded.
+//
+// The payload of the returned frame is the applier's own buffer: it stays valid
+// until the next Apply on this applier, which is the same window a composer's
+// grid has and for the same reason. Every other field is a value, so a caller
+// that keeps the geometry or the duration keeps something true.
+//
+// The canvas rule applied is Canvas.Apply's, deliberately: a keyframe clears the
+// canvas before its cells are written, and style 0 erases. Restating it here is
+// how the two would come to disagree.
+func (ap *FrameApplier) Apply(a *Animation, i int, c *Canvas) (*Frame, error) {
+	info, kind, err := a.frameInfoAt(i)
+	if err != nil {
+		return nil, err
+	}
+
+	// ap.cells[:0] rather than ap.cells: the cells are appended in the grammar's
+	// order, so decoding into the buffer's used length would leave the previous
+	// frame's cells in front of this one's.
+	cells, err := a.decodeCells(info, kind, ap.cells[:0])
+	if err != nil {
+		// The buffer keeps its old length, so a failed frame leaves nothing behind
+		// for the next one to read.
+		return nil, err
+	}
+	ap.cells = cells
+
+	frame := frameOf(i, info, cells)
+	c.Apply(frame)
+	return frame, nil
 }
 
 // TotalDuration is the sum of every frame's duration.
@@ -753,14 +837,25 @@ func (a *Animation) headerOf(i int) FrameHeader {
 // Seeking goes to one of these and replays forward. A delta frame names only
 // what changed since its predecessor, so there is no other place a decoder can
 // resume from.
+//
+// The answer is a property of the frame headers that nothing changes afterwards,
+// so it is computed once: Parse does it while it is already walking them, and
+// the guard covers an animation assembled another way. Like Palette, Glyphs and
+// Styles, the returned slice is the animation's own -- copy it before sorting or
+// trimming it.
 func (a *Animation) Keyframes() []int {
-	out := make([]int, 0, len(a.frames)/12+1)
+	a.keyframeOnce.Do(a.buildKeyframes)
+	return a.keyframes
+}
+
+// buildKeyframes fills keyframes from the frame headers.
+func (a *Animation) buildKeyframes() {
+	a.keyframes = make([]int, 0, len(a.frames)/12+1)
 	for i := range a.frames {
 		if a.frames[i].flags&frameKeyframe != 0 {
-			out = append(out, i)
+			a.keyframes = append(a.keyframes, i)
 		}
 	}
-	return out
 }
 
 // DurationBefore is the animation time at which frame i begins, which is also
@@ -815,26 +910,136 @@ func (a *Animation) FrameAtTime(ms uint64) int {
 // area is the canvas cell count, in 64 bits so that a large grid cannot wrap.
 func (a *Animation) area() uint64 { return uint64(a.Width) * uint64(a.Height) }
 
-// inflate decompresses a per-frame zlib stream, bounded by maxInflated.
-func inflate(data []byte, area uint64) ([]byte, error) {
-	zr, err := zlib.NewReader(bytes.NewReader(data))
+// ---- payload inflation ----
+//
+// Reading one frame's payload means building a zlib reader, and a player does
+// that once per frame. Both halves of that work are pooled, because both are
+// per-frame allocations that say nothing about the payload:
+//
+//   - a reader carries the decompressor's 32 KB history window, which is the
+//     largest single allocation on the playback path;
+//   - the output buffer grows by doubling as a payload inflates, so one frame
+//     reallocates it several times on the way to a size that is known afterwards.
+//
+// A scratch is borrowed, used, and returned, so what it points at is valid until
+// then. That is why inflation takes a scratch and writes into it rather than
+// returning fresh bytes: bytes that come out of a pool have a lifetime, and a
+// function signature is a poor place to describe one.
+
+// inflater is a zlib stream plus the reset that makes it reusable.
+//
+// compress/zlib documents Reset as making the reader equivalent to a freshly
+// created one, so a pooled reader is not a reader carrying state from the frame
+// before it.
+type inflater interface {
+	io.Reader
+	zlib.Resetter
+}
+
+// sliceReader is the plain reader the decompressor is fed.
+//
+// It implements flate.Reader, which zlib prefers over a bare io.Reader: given
+// only Read, zlib wraps its input in a bufio.Reader, which is one more allocation
+// per frame for a buffer that already exists here.
+type sliceReader struct {
+	data []byte
+	off  int
+}
+
+func (r *sliceReader) Read(p []byte) (int, error) {
+	if r.off >= len(r.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.data[r.off:])
+	r.off += n
+	return n, nil
+}
+
+func (r *sliceReader) ReadByte() (byte, error) {
+	if r.off >= len(r.data) {
+		return 0, io.EOF
+	}
+	b := r.data[r.off]
+	r.off++
+	return b, nil
+}
+
+func (r *sliceReader) reset(data []byte) { r.data, r.off = data, 0 }
+
+// maxPooledInflate is the largest inflated buffer worth keeping.
+//
+// A payload that reached the ceiling would otherwise pin that much memory in the
+// pool for the life of the process, which is the one way a pool turns a saving
+// into a leak.
+const maxPooledInflate = 1 << 20
+
+// emptyZlib is a complete zlib stream holding nothing: a valid header followed by
+// an empty final stored block. The pool needs one because zlib.NewReader parses
+// the header eagerly and so cannot be built over nothing at all.
+var emptyZlib = []byte{0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01}
+
+// inflateScratch is one pooled reader and the buffer it inflates into.
+type inflateScratch struct {
+	src    sliceReader
+	zlib   inflater
+	opened error
+	limit  io.LimitedReader
+	out    bytes.Buffer
+}
+
+var inflateScratchPool = sync.Pool{New: func() any {
+	zr, err := zlib.NewReader(bytes.NewReader(emptyZlib))
 	if err != nil {
+		// Unreachable unless this package's own empty stream is wrong, which would
+		// be a mistake here rather than a fault in a payload. Recorded rather than
+		// panicked so that it surfaces as a decode error like any other.
+		return &inflateScratch{opened: err}
+	}
+	resettable, ok := zr.(inflater)
+	if !ok {
+		return &inflateScratch{opened: errFormat("the zlib reader is not resettable")}
+	}
+	return &inflateScratch{zlib: resettable}
+}}
+
+func acquireInflateScratch() *inflateScratch { return inflateScratchPool.Get().(*inflateScratch) }
+
+func releaseInflateScratch(s *inflateScratch) {
+	if s.out.Cap() > maxPooledInflate {
+		s.out = bytes.Buffer{}
+	}
+	inflateScratchPool.Put(s)
+}
+
+// inflateInto decompresses one per-frame zlib stream, bounded by maxInflated.
+//
+// The zlib checksum is verified when the stream is read to its end, which is what
+// this does; Close verifies nothing -- the standard library says so -- so it is
+// not called and the reader is reset for the next frame instead.
+func inflateInto(s *inflateScratch, data []byte, area uint64) ([]byte, error) {
+	if s.opened != nil {
+		return nil, errFormat("payload is not a valid zlib stream: %v", s.opened)
+	}
+
+	s.src.reset(data)
+	if err := s.zlib.Reset(&s.src, nil); err != nil {
 		return nil, errFormat("payload is not a valid zlib stream: %v", err)
 	}
-	defer func() { _ = zr.Close() }()
 
 	// At most one cell per canvas position, and a cell costs a handful of bytes
 	// even with its varints padded to full length, so 40 per cell is generous.
-	limit := area*40 + 4096
-	if limit > maxInflated {
-		limit = maxInflated
+	bound := area*40 + 4096
+	if bound > maxInflated {
+		bound = maxInflated
 	}
 
-	out, err := io.ReadAll(io.LimitReader(zr, int64(limit)))
-	if err != nil {
+	s.out.Reset()
+	s.limit.R = s.zlib
+	s.limit.N = int64(bound)
+	if _, err := s.out.ReadFrom(&s.limit); err != nil {
 		return nil, errFormat("inflating payload: %v", err)
 	}
-	return out, nil
+	return s.out.Bytes(), nil
 }
 
 // BodyKindOf reports which grammar a frame used, for tooling and tests.

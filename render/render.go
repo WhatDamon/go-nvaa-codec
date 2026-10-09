@@ -37,6 +37,10 @@ type Cell struct {
 }
 
 // Grid is one frame's visible screen.
+//
+// A grid is a buffer rather than a value: a composer hands out one of two and
+// writes the next frame into the other. See Composer.Grid for how long a
+// returned grid stays valid.
 type Grid struct {
 	// X0 and Y0 locate the window in canvas coordinates.
 	X0, Y0        int
@@ -62,6 +66,161 @@ func (g *Grid) Row(vy int) []Cell {
 	return g.Cells[vy*g.Width : (vy+1)*g.Width]
 }
 
+// Composer folds frames into a canvas and resolves visible windows.
+//
+// It holds one canvas rather than a list of frames, so memory stays flat in the
+// frame count -- which is the difference between working and not on an
+// 8704-frame animation. It also holds the scratch that resolving a grid needs,
+// because resolution runs once per frame and, on a small canvas, is the largest
+// part of what a playback frame costs.
+type Composer struct {
+	anim   *nvaa.Animation
+	canvas *nvaa.Canvas
+
+	// glyphWide answers "is this glyph two columns wide" by glyph id, computed
+	// once from the glyph table. A map answers the same question, but the question
+	// is asked once per visible cell per frame.
+	glyphWide []bool
+
+	// styles and cont are the per-row scratch resolution needs: the style id at
+	// each visible column, and whether that column is the right half of a wide
+	// glyph. Held rather than reallocated per row.
+	styles []uint32
+	cont   []bool
+
+	// grids are the two most recent grids, written alternately, and slot is which
+	// of them the next call takes.
+	grids [2]*Grid
+	slot  int
+}
+
+// NewComposer starts an empty composer for an animation.
+func NewComposer(anim *nvaa.Animation) *Composer {
+	c := &Composer{
+		anim:   anim,
+		canvas: nvaa.NewCanvas(anim.Width, anim.Height),
+	}
+
+	c.glyphWide = make([]bool, len(anim.Glyphs))
+	for id, glyph := range anim.Glyphs {
+		c.glyphWide[id] = IsWideGlyph(glyph)
+	}
+	return c
+}
+
+// Reset empties the canvas, for a replay or a rewind.
+func (c *Composer) Reset() { c.canvas.Reset() }
+
+// Apply folds a frame into the canvas.
+func (c *Composer) Apply(f *nvaa.Frame) { c.canvas.Apply(f) }
+
+// Canvas exposes the running world state.
+func (c *Composer) Canvas() *nvaa.Canvas { return c.canvas }
+
+// Animation exposes the animation being composed.
+func (c *Composer) Animation() *nvaa.Animation { return c.anim }
+
+// IsWide reports whether a glyph occupies two columns. Answers are precomputed
+// because a grid asks this once per cell per frame.
+func (c *Composer) IsWide(glyphID uint32) bool {
+	if int(glyphID) < len(c.glyphWide) {
+		return c.glyphWide[glyphID]
+	}
+	return false
+}
+
+// Grid resolves the visible window of the current canvas.
+//
+// The result is one of two buffers that alternate, so the grid from the previous
+// call is still intact while this one is built. Resolution is otherwise the most
+// expensive part of a playback frame on a small canvas, and allocating a grid per
+// frame is what made it so: a caller may hold a grid until the call after next,
+// which is exactly the window that differencing the previous frame needs. A
+// caller that needs one to live longer should copy it.
+func (c *Composer) Grid(f *nvaa.Frame, columns, lines int) *Grid {
+	x0, y0, width, height := nvaa.ViewportWindow(c.anim, f, columns, lines)
+
+	g := c.reuse(width, height)
+	g.X0, g.Y0 = x0, y0
+
+	if cap(c.styles) < width {
+		c.styles = make([]uint32, width)
+	}
+	if cap(c.cont) < width {
+		c.cont = make([]bool, width)
+	}
+	styles, cont := c.styles[:width], c.cont[:width]
+
+	for vy := range height {
+		for vx := range width {
+			styles[vx] = c.canvas.At(uint32(x0+vx), uint32(y0+vy))
+		}
+
+		// Pair wide glyphs left to right, consuming both columns. Asking "is my
+		// left neighbour wide?" instead would also condemn the cell *after* a
+		// pair, because a continuation cell carries the same wide glyph as its
+		// owner -- so a real glyph would be skipped.
+		clear(cont)
+		for vx := 0; vx < width-1; {
+			if c.IsWide(c.styleGlyph(styles[vx])) {
+				cont[vx+1] = true
+				vx += 2
+			} else {
+				vx++
+			}
+		}
+
+		base := vy * width
+		for vx := range width {
+			cell := Cell{Style: styles[vx], Continuation: cont[vx]}
+			if style, ok := c.anim.StyleAt(styles[vx]); ok {
+				if glyph, ok := c.anim.GlyphAt(style.Glyph); ok {
+					cell.Glyph = glyph
+				}
+				if int(style.FG) < len(c.anim.Palette) {
+					cell.FG = c.anim.Palette[style.FG]
+				}
+				if int(style.BG) < len(c.anim.Palette) {
+					cell.BG = c.anim.Palette[style.BG]
+				}
+			}
+			g.Cells[base+vx] = cell
+		}
+	}
+	return g
+}
+
+// reuse returns the next grid buffer for a window of this size.
+//
+// A change of size allocates a new grid rather than resizing the one in hand: a
+// caller may still be holding it, and a grid that changed size underneath its
+// holder would be worse than one that is merely stale.
+func (c *Composer) reuse(width, height int) *Grid {
+	if g := c.grids[c.slot]; g != nil && g.Width == width && g.Height == height {
+		c.slot ^= 1
+		return g
+	}
+
+	g := &Grid{Width: width, Height: height, Cells: make([]Cell, width*height)}
+	c.grids[c.slot] = g
+	c.slot ^= 1
+	return g
+}
+
+// styleGlyph resolves a style id to its glyph id, or 0 when unknown.
+func (c *Composer) styleGlyph(styleID uint32) uint32 {
+	if style, ok := c.anim.StyleAt(styleID); ok {
+		return style.Glyph
+	}
+	return 0
+}
+
+// Digest hashes what a frame puts on screen.
+//
+// It covers resolved glyphs and colours rather than style ids, so two
+// implementations agree when they display the same thing even if their style
+// tables are ordered differently. Continuation columns are skipped because the
+// wide glyph that owns them already contributes.
 func (g *Grid) Digest() [sha256.Size]byte {
 	hasher := sha256.New()
 
@@ -83,114 +242,6 @@ func (g *Grid) Digest() [sha256.Size]byte {
 	var out [sha256.Size]byte
 	copy(out[:], hasher.Sum(nil))
 	return out
-}
-
-// Composer folds frames into a canvas and resolves visible windows.
-//
-// It holds one canvas rather than a list of frames, so memory stays flat in the
-// frame count -- which is the difference between working and not on an
-// 8704-frame animation.
-type Composer struct {
-	anim   *nvaa.Animation
-	canvas *nvaa.Canvas
-	wide   map[uint32]bool
-}
-
-// NewComposer starts an empty composer for an animation.
-func NewComposer(anim *nvaa.Animation) *Composer {
-	return &Composer{
-		anim:   anim,
-		canvas: nvaa.NewCanvas(anim.Width, anim.Height),
-		wide:   make(map[uint32]bool),
-	}
-}
-
-// Reset empties the canvas, for a replay or a rewind.
-func (c *Composer) Reset() { c.canvas.Reset() }
-
-// Apply folds a frame into the canvas.
-func (c *Composer) Apply(f *nvaa.Frame) { c.canvas.Apply(f) }
-
-// Canvas exposes the running world state.
-func (c *Composer) Canvas() *nvaa.Canvas { return c.canvas }
-
-// Animation exposes the animation being composed.
-func (c *Composer) Animation() *nvaa.Animation { return c.anim }
-
-// IsWide reports whether a glyph occupies two columns. Answers are cached
-// because a grid asks this once per cell per frame.
-func (c *Composer) IsWide(glyphID uint32) bool {
-	if wide, ok := c.wide[glyphID]; ok {
-		return wide
-	}
-
-	var wide bool
-	if glyphID < uint32(len(c.anim.Glyphs)) {
-		wide = IsWideGlyph(c.anim.Glyphs[glyphID])
-	}
-	c.wide[glyphID] = wide
-	return wide
-}
-
-// Grid resolves the visible window of the current canvas.
-func (c *Composer) Grid(f *nvaa.Frame, columns, lines int) *Grid {
-	x0, y0, width, height := nvaa.ViewportWindow(c.anim, f, columns, lines)
-
-	g := &Grid{
-		X0:     x0,
-		Y0:     y0,
-		Width:  width,
-		Height: height,
-		Cells:  make([]Cell, width*height),
-	}
-
-	styles := make([]uint32, width)
-
-	for vy := range height {
-		for vx := range width {
-			styles[vx] = c.canvas.At(uint32(x0+vx), uint32(y0+vy))
-		}
-
-		// Pair wide glyphs left to right, consuming both columns. Asking "is my
-		// left neighbour wide?" instead would also condemn the cell *after* a
-		// pair, because a continuation cell carries the same wide glyph as its
-		// owner -- so a real glyph would be skipped.
-		continuation := make([]bool, width)
-		for vx := 0; vx < width-1; {
-			if c.IsWide(c.styleGlyph(styles[vx])) {
-				continuation[vx+1] = true
-				vx += 2
-			} else {
-				vx++
-			}
-		}
-
-		base := vy * width
-		for vx := range width {
-			cell := Cell{Style: styles[vx], Continuation: continuation[vx]}
-			if style, ok := c.anim.StyleAt(styles[vx]); ok {
-				if glyph, ok := c.anim.GlyphAt(style.Glyph); ok {
-					cell.Glyph = glyph
-				}
-				if int(style.FG) < len(c.anim.Palette) {
-					cell.FG = c.anim.Palette[style.FG]
-				}
-				if int(style.BG) < len(c.anim.Palette) {
-					cell.BG = c.anim.Palette[style.BG]
-				}
-			}
-			g.Cells[base+vx] = cell
-		}
-	}
-	return g
-}
-
-// styleGlyph resolves a style id to its glyph id, or 0 when unknown.
-func (c *Composer) styleGlyph(styleID uint32) uint32 {
-	if style, ok := c.anim.StyleAt(styleID); ok {
-		return style.Glyph
-	}
-	return 0
 }
 
 // FullRepaint renders every visible row behind an absolute cursor move.

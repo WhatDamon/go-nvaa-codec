@@ -13,6 +13,32 @@ import (
 // a caller can tell a bad seek from a corrupt file.
 var ErrNoSuchFrame = errors.New("no such frame")
 
+// How much a keyframe snapshot is worth keeping.
+//
+// The expensive frame in a group is the keyframe that begins it, because it paints
+// every cell. A snapshot is that frame's result rather than its payload, so a
+// second rewind into the same group costs one canvas copy instead of one full
+// decode. The per-snapshot bound keeps a very large canvas from making the cache
+// the largest thing in the process, and there are only ever a few: a viewer steps
+// around one part of an animation, not all of it.
+const (
+	maxSnapshots           = 4
+	maxSnapshotCanvasBytes = 1 << 20
+
+	// snapshotHistory is how many of the last seeks are remembered for deciding
+	// whether a group is being replayed. Two is enough to catch the shape a viewer
+	// actually makes -- jump to the next keyframe and back again -- without keeping
+	// enough history to call a scattered walk a pattern.
+	snapshotHistory = 2
+)
+
+// keyframeSnapshot is the canvas a keyframe produced, kept so that coming back to
+// the same group does not decode that keyframe again.
+type keyframeSnapshot struct {
+	index  int
+	canvas *nvaa.Canvas
+}
+
 // Timeline drives playback. It owns the current frame index, the running
 // canvas, and the visible grid.
 //
@@ -23,6 +49,20 @@ type Timeline struct {
 	anim      *nvaa.Animation
 	composer  *render.Composer
 	keyframes []int
+
+	// scratch is the second composer a seek replays into, and applier folds frames
+	// into whichever composer is live without allocating a frame's cells for each.
+	// Both are held rather than created per seek: a seek is a keystroke, and the
+	// buffers it needs are the same size every time.
+	scratch *render.Composer
+	applier *nvaa.FrameApplier
+
+	// snapshots are keyframe results, most recently used first, and recent are the
+	// groups the last few seeks replayed. Together they decide what a snapshot is
+	// worth; see rememberSnapshot.
+	snapshots  []keyframeSnapshot
+	recent     [snapshotHistory]int
+	snapshotOK bool
 
 	index     int
 	frame     *nvaa.Frame
@@ -36,13 +76,23 @@ type Timeline struct {
 // NewTimeline prepares playback at the first frame. Nothing is decoded until
 // Start or Seek is called.
 func NewTimeline(anim *nvaa.Animation, columns, lines int) *Timeline {
-	return &Timeline{
-		anim:      anim,
-		composer:  render.NewComposer(anim),
-		keyframes: anim.Keyframes(),
-		columns:   columns,
-		lines:     lines,
+	// A canvas is one uint32 per cell, and there are four snapshots to hold.
+	canvasBytes := uint64(anim.Width) * uint64(anim.Height) * 4
+
+	t := &Timeline{
+		anim:       anim,
+		composer:   render.NewComposer(anim),
+		scratch:    render.NewComposer(anim),
+		applier:    nvaa.NewFrameApplier(),
+		keyframes:  anim.Keyframes(),
+		columns:    columns,
+		lines:      lines,
+		snapshotOK: canvasBytes*maxSnapshots <= uint64(maxSnapshotCanvasBytes),
 	}
+	for i := range t.recent {
+		t.recent[i] = -1
+	}
+	return t
 }
 
 // Columns reports the output width.
@@ -61,6 +111,12 @@ func (t *Timeline) Count() int { return t.anim.FrameCount() }
 func (t *Timeline) Animation() *nvaa.Animation { return t.anim }
 
 // Frame returns the current frame, or nil before Start.
+//
+// The frame's Payload is the applier's buffer: it stays valid until the next
+// step, the same window Grid's cells have and for the same reason. Every other
+// field is a value, so a caller reading the geometry or the duration of a frame
+// it stepped past is reading something that is still true. A caller that wants to
+// keep the cells should read them from the animation with FrameAt instead.
 func (t *Timeline) Frame() *nvaa.Frame { return t.frame }
 
 // Grid returns the current visible screen, or nil before Start.
@@ -90,29 +146,76 @@ func (t *Timeline) Start() error { return t.Seek(0) }
 
 // Seek jumps to a frame. Because a delta frame describes only what changed
 // since its predecessor, there is nothing to decode in isolation: seeking
-// rewinds to the nearest keyframe at or before the target and replays forward.
+// backwards rewinds to the nearest keyframe at or before the target and replays
+// forward.
+//
+// Forwards is a different question. The canvas is already the state at the frame
+// on screen, so if no keyframe lies between that frame and the target, the frames
+// in between are the only work left -- and stepping through those costs less than
+// replaying the whole group from its start. The price is one pass over the canvas,
+// which is also what keeps a corrupt payload from reaching the live picture: the
+// replay happens in the scratch composer either way, and it is swapped in only
+// once every frame has decoded.
 func (t *Timeline) Seek(target int) error {
 	if target < 0 || target >= t.Count() {
 		return fmt.Errorf("%w: %d is outside 0..%d", ErrNoSuchFrame, target, t.Count()-1)
 	}
 
-	// Replay into a scratch composer and swap it in only after every frame has
-	// decoded. Resetting the live canvas first would leave it holding a partial
-	// replay if a payload turned out to be corrupt, and the next delta applied
-	// to that wreckage would produce a wrong picture with no error anywhere.
-	scratch := render.NewComposer(t.anim)
+	// Already showing the frame asked for: there is nothing to replay, and the
+	// canvas and the grid are what the answer already is.
+	if t.loaded && t.index == target {
+		t.elapsedMS = t.anim.DurationBefore(target)
+		return t.recompose()
+	}
 
+	start := t.keyframeAtOrBefore(target)
+	forward := t.loaded && start < t.index && t.index <= target
+
+	// Whether this group is worth a snapshot has to be decided before this seek
+	// becomes part of the history it is asking about.
+	keep := t.snapshotWorthKeeping(start)
+	copy(t.recent[1:], t.recent[:snapshotHistory-1])
+	t.recent[0] = start
+
+	scratch := t.scratch
+	scratch.Reset()
+
+	first := start
+	switch {
+	case forward:
+		scratch.Canvas().CopyFrom(t.composer.Canvas())
+		first = t.index + 1
+	case start < target:
+		// A snapshot holds the canvas a keyframe produced but not the frame it is,
+		// so it can only stand in for a replay that still has deltas left to apply.
+		// Landing exactly on the keyframe has to decode it, which is what produces
+		// the frame the host will be told about.
+		if snapshot := t.lookupSnapshot(start); snapshot != nil {
+			scratch.Canvas().CopyFrom(snapshot)
+			first = start + 1
+		}
+	}
+
+	// Every path above leaves at least one frame to apply, which is what makes the
+	// landing frame's geometry -- its camera and viewport -- correct rather than
+	// whatever the previous frame happened to carry.
 	var frame *nvaa.Frame
-	for i := t.keyframeAtOrBefore(target); i <= target; i++ {
-		f, err := t.anim.FrameAt(i)
+	for i := first; i <= target; i++ {
+		decoded, err := t.applier.Apply(t.anim, i, scratch.Canvas())
 		if err != nil {
 			return err
 		}
-		scratch.Apply(f)
-		frame = f
+		frame = decoded
+
+		if i == start {
+			// Applying the keyframe left the canvas in exactly the state a later
+			// rewind into this group wants, and it is the frame that cost the most
+			// to get there.
+			t.rememberSnapshot(start, scratch.Canvas(), keep)
+		}
 	}
 
-	t.composer = scratch
+	t.composer, t.scratch = scratch, t.composer
 	t.index = target
 	t.frame = frame
 
@@ -124,9 +227,64 @@ func (t *Timeline) Seek(target int) error {
 	return t.recompose()
 }
 
-// Next advances one frame in place, which is cheap because the canvas is
-// already at the previous frame. It reports false at the end.
-func (t *Timeline) Next() (bool, error) {
+// lookupSnapshot returns the canvas a keyframe produced, if one is held.
+func (t *Timeline) lookupSnapshot(index int) *nvaa.Canvas {
+	for i, snapshot := range t.snapshots {
+		if snapshot.index != index {
+			continue
+		}
+		// Most recently used first, so what gets evicted is the group nobody is
+		// stepping around in.
+		copy(t.snapshots[1:i+1], t.snapshots[:i])
+		t.snapshots[0] = snapshot
+		return snapshot.canvas
+	}
+	return nil
+}
+
+// snapshotWorthKeeping reports whether a snapshot of this group would be read.
+//
+// It would not, usually: a viewer jumping around a file replays a different group
+// every time, and a canvas copied for each of those is memory written on every
+// seek that nothing ever reads. A viewer scrubbing one part of an animation
+// replays the same group over and over, and for them the copy replaces a full
+// keyframe decode. So a group is only kept once it has been replayed, and the
+// cache filling up is what tells the difference.
+func (t *Timeline) snapshotWorthKeeping(start int) bool {
+	if len(t.snapshots) < maxSnapshots {
+		return true
+	}
+	for _, recent := range t.recent {
+		if recent == start {
+			return true
+		}
+	}
+	return false
+}
+
+// rememberSnapshot keeps the canvas a keyframe produced, most recently used
+// first.
+func (t *Timeline) rememberSnapshot(index int, canvas *nvaa.Canvas, worthKeeping bool) {
+	if !t.snapshotOK || !worthKeeping {
+		return
+	}
+
+	kept := keyframeSnapshot{index: index, canvas: canvas.Clone()}
+	if len(t.snapshots) < maxSnapshots {
+		t.snapshots = append(t.snapshots, keyframeSnapshot{})
+	} else {
+		// Make room by dropping the least recently used, which is the last one.
+		copy(t.snapshots[1:], t.snapshots[:maxSnapshots-1])
+	}
+	t.snapshots[0] = kept
+}
+
+// advance moves one frame forward without resolving a grid for it.
+//
+// A host that was starved steps through every frame it missed, and only the last
+// of them is ever drawn: resolving a grid per skipped frame is work thrown away,
+// and on a small canvas a grid is the most expensive part of a playback frame.
+func (t *Timeline) advance() (bool, error) {
 	if !t.loaded {
 		if err := t.Start(); err != nil {
 			return false, err
@@ -138,16 +296,24 @@ func (t *Timeline) Next() (bool, error) {
 	}
 
 	next := t.index + 1
-	frame, err := t.anim.FrameAt(next)
+	frame, err := t.applier.Apply(t.anim, next, t.composer.Canvas())
 	if err != nil {
 		return false, err
 	}
-	t.composer.Apply(frame)
 
 	t.elapsedMS += t.frame.DurationMS
 	t.index = next
 	t.frame = frame
+	return true, nil
+}
 
+// Next advances one frame in place, which is cheap because the canvas is
+// already at the previous frame. It reports false at the end.
+func (t *Timeline) Next() (bool, error) {
+	moved, err := t.advance()
+	if err != nil || !moved {
+		return moved, err
+	}
 	return true, t.recompose()
 }
 

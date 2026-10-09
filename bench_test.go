@@ -235,8 +235,9 @@ func BenchmarkKeyframes(b *testing.B) {
 }
 
 // requireRealAllocator steps aside when the race detector is on, because it
-// tracks every allocation: the counts it produces describe a build nobody ships,
-// and a budget is a statement about a build somebody does.
+// tracks every allocation and stops sync.Pool from retaining anything: the counts
+// it produces describe a build nobody ships, and a budget is a statement about a
+// build somebody does.
 func requireRealAllocator(t *testing.T) {
 	t.Helper()
 
@@ -249,22 +250,26 @@ func requireRealAllocator(t *testing.T) {
 // tells you when it got worse, which is the failure that otherwise goes
 // unnoticed until someone profiles a terminal.
 //
-// Each ceiling is the baseline as measured here plus room for a different
-// allocator, not a target: these describe what the code does today, so that a
-// change which doubles the garbage per frame has to argue for itself. The
-// measurement each one rests on is printed by the test that uses it.
+// Each ceiling is the measured baseline plus room for a different allocator, not
+// a target. Pooling the zlib reader and the buffer it inflates into took FrameAt
+// from 17 allocations and 129 KB per frame to 5 and 82, and listing the
+// keyframes is now done once while Parse walks the headers, so it allocates
+// nothing in the steady state.
 //
-// FrameAt allocates a cell buffer per frame and should: a frame from it belongs
-// to the caller and must outlive the next call. Keyframes() rescans every frame's
-// flags on each call and so rebuilds its list. Both are per-frame costs, and a
-// seek pays each of them once for every frame it replays.
+// FrameAt keeps allocating its cells, and should: a frame from it belongs to the
+// caller and must outlive the next call. FrameApplier is the one that reuses a
+// buffer, which is why the player's per-frame budget is two orders of magnitude
+// smaller than this one.
 const (
 	parseBudgetBytes    = 400 << 10
 	parseBudgetAllocs   = 20
-	frameAtBudgetBytes  = 160 << 10
-	frameAtBudgetAllocs = 24
-	keyframesBudget     = 8 << 10
-	keyframesAllocs     = 3
+	frameAtBudgetBytes  = 128 << 10
+	frameAtBudgetAllocs = 8
+	keyframesBudget     = 2 << 10
+	// Keyframes are built while Parse walks the headers, so the accessor itself
+	// allocates nothing at all. The measurement's warm-up would absorb a one-time
+	// build, so a per-call allocation here means one was introduced.
+	keyframesAllocs = 0
 )
 
 func TestParseAllocationBudget(t *testing.T) {

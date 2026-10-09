@@ -84,14 +84,19 @@ func putUvarint(b []byte, v uint64) []byte {
 	return append(b, byte(v))
 }
 
-// heapInUse reports the heap in use, used only to bound an allocation. It is
-// read before and after a parse rather than measured precisely: the test is
-// looking for an allocation proportional to a claim, which is orders of
-// magnitude away from the noise here.
-func heapInUse() uint64 {
+// allocatedSoFar reports how many bytes the heap has allocated in total, used
+// only to bound an allocation.
+//
+// It is a running total rather than the heap in use because that falls when a
+// collection runs: a reading that fell between the two calls turned the
+// difference into an underflow, and the test reported a hostile header as having
+// grown the heap by eighteen exabytes. A total only rises, and it also counts an
+// allocation that was collected immediately, which is what a rejected claim looks
+// like.
+func allocatedSoFar() uint64 {
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
-	return stats.HeapInuse
+	return stats.TotalAlloc
 }
 
 // mustNotPanic runs fn and turns a panic into a test failure. The property under
@@ -251,9 +256,9 @@ func TestHostileHeadersStayCheap(t *testing.T) {
 	}
 
 	for i, blob := range blobs {
-		before := heapInUse()
+		before := allocatedSoFar()
 		anim, err := Parse(blob)
-		after := heapInUse()
+		after := allocatedSoFar()
 
 		if err == nil {
 			t.Errorf("hostile blob %d was accepted (%d frames)", i, anim.FrameCount())
@@ -262,7 +267,7 @@ func TestHostileHeadersStayCheap(t *testing.T) {
 		// A megabyte of slack: the point is to catch an allocation proportional
 		// to the claim, not to measure the decoder.
 		if grew := after - before; grew > 1<<20 {
-			t.Errorf("blob %d grew the heap by %d bytes", i, grew)
+			t.Errorf("blob %d allocated %d bytes while being rejected", i, grew)
 		}
 	}
 }

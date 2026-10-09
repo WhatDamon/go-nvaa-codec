@@ -581,27 +581,38 @@ func (p *Player) clockMS() uint64 {
 
 // advanceToClock moves playback to wherever the clock says it should be,
 // skipping frames if the host was starved.
+//
+// The frames it skips are stepped over without resolving a grid: only the frame
+// the clock lands on is ever drawn, and resolving a grid is on a small canvas the
+// most expensive part of a playback frame. The grid is resolved once, at the end,
+// for the frame that will actually be shown.
 func (p *Player) advanceToClock() error {
 	now := p.clockMS()
 
+	skipped := false
 	for !p.timeline.AtEnd() {
 		deadline := p.timeline.ElapsedMS() + p.timeline.Frame().DurationMS
 		if now < deadline {
-			return nil
+			break
 		}
-		next, err := p.timeline.Next()
+		next, err := p.timeline.advance()
 		if err != nil {
 			return err
 		}
 		if !next {
 			break
 		}
+		skipped = true
 	}
 
 	// Finish only once the last frame has been on screen for its own duration.
 	deadline := p.timeline.ElapsedMS() + p.timeline.Frame().DurationMS
 	if now >= deadline {
 		p.phase = phaseFinished
+	}
+
+	if skipped {
+		return p.timeline.recompose()
 	}
 	return nil
 }

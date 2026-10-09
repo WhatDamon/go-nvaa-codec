@@ -65,9 +65,13 @@ single number rather than three fields.
 
 Frames then come in two kinds. A **keyframe** clears the canvas and paints it; a
 **delta frame** carries only what changed since the frame before it. A single
-reference frame is supported and bidirectional prediction is not, so seeking means
-rewinding to the nearest keyframe and replaying forward — which is why keyframe
-spacing is a real choice for an encoder (see section 13 of the specification).
+reference frame is supported and bidirectional prediction is not, so seeking
+*backwards* means rewinding to the nearest keyframe and replaying forward — which
+is why keyframe spacing is a real choice for an encoder (see section 13 of the
+specification). Seeking forwards is a different question: the frame on screen is
+already a decoded state, so a player steps from there, and a rewind that lands in
+a group it has already replayed restores that keyframe's canvas rather than
+decoding it again.
 
 Three payload grammars are available for the changes, and an encoder picks
 whichever is smallest: runs by row, a list of cells, or the distance between

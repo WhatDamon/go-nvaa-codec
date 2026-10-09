@@ -143,13 +143,13 @@ func BenchmarkDigest(b *testing.B) {
 // wants to hold 60 frames a second, so what it allocates matters as much as how
 // long it takes.
 //
-// These are first, deliberately loose ceilings: measured on an M4 with go1.27,
-// resolving one grid at 80x24 costs 27 allocations and 66 KB, and the ceilings
-// sit well above that so they catch a change of kind -- an extra buffer per frame
-// -- rather than a difference between allocators.
+// Grid resolution now reuses the composer's buffers: measured on an M4 with
+// go1.27 it allocates nothing per call and takes 7.3µs, down from 27 allocations,
+// 66 KB and 12.3µs. The ceiling allows for one allocation, which is what the
+// first call of a new window size costs, and no more.
 const (
-	gridBudgetBytes  = 512 << 10
-	gridBudgetAllocs = 80
+	gridBudgetBytes  = 4 << 10
+	gridBudgetAllocs = 2
 )
 
 func TestGridAllocationBudget(t *testing.T) {
@@ -161,8 +161,8 @@ func TestGridAllocationBudget(t *testing.T) {
 	composer := NewComposer(anim)
 	frame := heaviestKeyframe(t, anim)
 
-	// The measurement discards its first run, so the budget is about every call
-	// after the first.
+	// The first call allocates the two reused grids; the budget is about every
+	// call after it, which is what the measurement's discarded warm-up run covers.
 	allocs, bytes := synth.Measure(200, func() {
 		synth.Sink = composer.Grid(frame, 80, 24)
 	})

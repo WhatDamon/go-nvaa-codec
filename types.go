@@ -1,5 +1,7 @@
 package nvaa
 
+import "sync"
+
 // The decoded data model: the tables, the canvas, the camera, and one frame
 // worth of changes.
 
@@ -115,6 +117,33 @@ func (c *Canvas) Reset() {
 	clear(c.cell)
 }
 
+// Clone returns an independent copy of the canvas.
+//
+// A player keeps one of these per keyframe it has recently replayed: rewinding
+// into a GOP means restoring the state its keyframe produced, and copying a canvas
+// is cheaper than decoding the frame that painted it -- a keyframe paints every
+// cell, which makes it the most expensive frame in a group.
+func (c *Canvas) Clone() *Canvas {
+	return &Canvas{W: c.W, H: c.H, cell: append([]uint32(nil), c.cell...)}
+}
+
+// CopyFrom replaces c's contents with other's.
+//
+// The two are expected to be the same size, which is what two canvases for one
+// animation are. A mismatch is honoured rather than ignored: silently keeping the
+// old grid would produce a picture that is wrong in a way nothing reports.
+func (c *Canvas) CopyFrom(other *Canvas) {
+	if other == nil {
+		c.Reset()
+		return
+	}
+	if c.W != other.W || c.H != other.H {
+		c.W, c.H = other.W, other.H
+		c.cell = make([]uint32, uint64(other.W)*uint64(other.H))
+	}
+	copy(c.cell, other.cell)
+}
+
 // Apply folds a frame into the canvas: a keyframe clears first, then the
 // payload is written over the top. Writing style 0 therefore erases a cell
 // rather than leaving it alone.
@@ -210,6 +239,13 @@ type Animation struct {
 	// sum over every frame -- seeking should not get slower as the animation
 	// grows.
 	prefix []uint64
+
+	// keyframes holds the indices that begin a GOP, and keyframeOnce guards
+	// building it. It is also read-only after that; the once is for animations
+	// assembled by hand rather than by Parse, where the first caller to ask may be
+	// any caller.
+	keyframeOnce sync.Once
+	keyframes    []int
 }
 
 // FrameCount reports the frame count from the header.

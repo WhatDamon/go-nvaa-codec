@@ -325,8 +325,8 @@ func readAnim(tb testing.TB, path string) *nvaa.Animation {
 }
 
 // requireRealAllocator steps aside when the race detector is on, which tracks
-// every allocation: a budget is a statement about a build somebody ships, and
-// that build has no detector in it.
+// every allocation and stops sync.Pool from retaining anything: a budget is a
+// statement about a build somebody ships, and that build has no detector in it.
 func requireRealAllocator(t *testing.T) {
 	t.Helper()
 
@@ -335,18 +335,19 @@ func requireRealAllocator(t *testing.T) {
 	}
 }
 
-// Allocation budgets. A step decodes one frame and a seek replays a group from
-// its keyframe, so each is measured per operation.
+// Allocation budgets. These are the numbers this work was for.
 //
-// Each ceiling is the baseline as measured here plus room for a different
-// allocator, not a target. A step costs 45 allocations and 200 KB; a seek costs
-// 110 and 785 KB, because it decodes every frame between the keyframe and the
-// target and each of those allocates its own cell buffer.
+// Each ceiling is the measured baseline plus room for a different allocator, not
+// a target. The path here was 45 allocations and 203 KB per frame and 110
+// allocations and 785 KB per seek; it is now 3 and 262 bytes per frame and 13 and
+// 1.2 KB per seek. What is left is one Frame value per frame decoded, which a
+// rewind pays about sixty of, so the ceilings are set for that rather than for
+// what the numbers happen to be on one machine.
 const (
-	seekBudgetBytes  = 1 << 20
-	seekBudgetAllocs = 140
-	nextBudgetBytes  = 256 << 10
-	nextBudgetAllocs = 56
+	seekBudgetBytes  = 64 << 10
+	seekBudgetAllocs = 20
+	nextBudgetBytes  = 8 << 10
+	nextBudgetAllocs = 5
 )
 
 func TestSeekAllocationBudget(t *testing.T) {
